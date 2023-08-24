@@ -1,0 +1,321 @@
+---
+title: "Task6"
+author: "Redkokosh Kirill"
+date: "12/02/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+df <- read.csv("winequality-red2.csv", header = TRUE, as.is = FALSE)
+head(df)
+```
+
+### Кoрoтко о данных
+
+Это данные о физико-химических свойствах вина, например, о кислотности, содержании диоксида серы, сульфатов и тд, а также качество вина (измеряемое баллами от 0 до 10).
+
+1 - фиксированная кислотность
+
+2 - летучая кислотность
+
+3 - лимонная кислота
+
+4 - остаточный сахар
+
+5 - хлориды
+
+6 - свободный диоксид серы
+
+7 - общий диоксид серы
+
+8 - плотность
+
+9 - рН
+
+10 - сульфаты
+
+11 - алкоголь
+
+## Первичный анализ данных
+
+### Описательная статистика
+
+```{r}
+summary(df)
+```
+
+Удалим из рассмотрения free.sulfur.dioxide, так как есть total.sulfur.dioxide и удалим citric.acid, так как есть fixed.acidity.
+
+```{r}
+df <- df[c(-3,-6)]
+names(df)[names(df) == 'fixed.acidity'] <- 'log_fixed.acidity'
+names(df)[names(df) == 'residual.sugar'] <- 'log_residual.sugar'
+names(df)[names(df) == 'chlorides'] <- 'log_chlorides'
+names(df)[names(df) == 'total.sulfur.dioxide'] <- 'log_total.sulfur.dioxide'
+names(df)[names(df) == 'sulphates'] <- 'log_sulphates'
+names(df)[names(df) == 'alcohol'] <- 'log_alcohol'
+```
+
+```{r}
+df$quality <- df$quality >= 6
+```
+
+### Виды признаков
+
+Таблица внизу показывает, какую моду имеют наши количественные признаки. Отсюда можно сделать вывод о том, являются они непрерывными или нет.
+Построим matrix plot для того, чтобы увидеть особенности в наших данных.
+
+```{r}
+library(lattice)
+library(ggplot2)
+library('GGally')
+set.seed(1)
+tr.index = sample(1:nrow(df), nrow(df)*0.5)
+dfTrain = df[tr.index, ]
+dfTest = df[-tr.index, ]
+ggpairs(dfTrain, title="correlogram", columns=c(1:9), upper = list(continuous = "points"), diag = list(continuous = "barDiag"))
+```
+
+Прологарифмируем 1, 3, 4, 5, 8, 9. 
+
+```{r}
+dfTrain_l <- transform(dfTrain, log_fixed.acidity=log(log_fixed.acidity), log_residual.sugar=log(log_residual.sugar), log_chlorides=log(log_chlorides), log_total.sulfur.dioxide=log(log_total.sulfur.dioxide), log_sulphates=log(log_sulphates), log_alcohol=log(log_alcohol))
+dfTest <- transform(dfTest, log_fixed.acidity=log(log_fixed.acidity), log_residual.sugar=log(log_residual.sugar), log_chlorides=log(log_chlorides), log_total.sulfur.dioxide=log(log_total.sulfur.dioxide), log_sulphates=log(log_sulphates), log_alcohol=log(log_alcohol))
+ggpairs(dfTrain_l, title="correlogram", columns=c(1:9), upper = list(continuous = "points"), diag = list(continuous = "barDiag"))
+```
+
+Удалим единичные outliers.
+
+А также добавим раскраску по признаку "quality".
+
+```{r}
+dfTrain_lo <- dfTrain_l
+dfTrain_lo[rownames(dfTrain_lo)[dfTrain_lo$log_chlorides < -4 | dfTrain_lo$log_total.sulfur.dioxide > 5.1 | dfTrain_lo$log_alcohol > 2.7],] <- NA
+dfTrain_lo <- na.omit(dfTrain_lo)
+ggpairs(dfTrain_lo, title="correlogram", columns=c(1:9), upper = list(continuous = "points"), diag = list(continuous = "barDiag"), mapping=ggplot2::aes(colour = quality))
+```
+
+Очевидного разделения на группы нет.
+
+```{r}
+library("factoextra")
+library("FactoMineR")
+res.pca <- PCA(dfTrain_lo[-10], scale.unit = TRUE, ncp = 6, graph= FALSE)
+get_eigenvalue(res.pca)
+fviz_pca_biplot(res.pca, habillage=dfTrain_lo$quality, addEllipses=TRUE, ellipse.level=0.95)
+```
+
+Рассматриваем первые 6 компонент, их информативность около 90%.
+
+В плоскости первых двух главных компонент доверительный эллипс каждой группы пересекается с другой группы (Можно предположить не слишком высокое качество классификации). Ковариационные матрицы не равны (нарушается модель LDA).
+
+Данные хорошо разделяются по второй главной компоненте.
+
+```{r}
+library(MASS)
+fit <- lda(scale(dfTrain_lo[,1:9]), dfTrain_lo[,10]) #prior для задания весов, по умолчанию- соотношения в обучающей выборке
+pred <- predict(fit, scale(dfTest[,1:9]))$class
+ct <- table(pred, dfTest[,10]) #строки - настоящие классы, столбцы - предсказанные классы.
+diag(prop.table(ct, 1))
+sum(diag(prop.table(ct)))
+```
+
+На test выборке лучше классифицируются хорошие вина. Общее процент правильно предсказанных индивидов-- 71%.
+
+```{r}
+library(candisc)
+candisc(lm(cbind(log_fixed.acidity, volatile.acidity, log_residual.sugar, log_chlorides, log_total.sulfur.dioxide, density, pH, log_sulphates, log_alcohol) ~ quality, data=dfTrain_lo))
+
+train.manova <- manova(cbind(log_fixed.acidity, volatile.acidity, log_residual.sugar, log_chlorides, log_total.sulfur.dioxide, density, pH, log_sulphates, log_alcohol) ~ quality, data=dfTrain_lo) #Смотрим на значимость дискриминации, то есть на то, отличаются ли средние по признакам между разными группами.
+
+summary(train.manova, 'Wilks')
+summary(train.manova, 'Roy')
+```
+
+p-value близко к нулю => классификация значима, но надо помнить, что нарушается модель (хотя количество индивидов в выборке позволяет говорить об ассимптотическом схождении).
+
+Так как группы всего 2, то нельзя изобразить данные в плоскости первых двух канонических переменных.
+
+```{r}
+pred <- predict(fit, scale(dfTrain_lo[,1:9]))
+ct <- table(pred$class, dfTrain_lo[,10]) 
+ct
+diag(prop.table(ct, 1))
+sum(diag(prop.table(ct)))
+```
+На train выборке лучше классифицируются хорошие вина. Общее процент правильно предсказанных индивидов-- 75% (выше чем на test, как и должно быть).
+
+```{r}
+fit_l <- lda(scale(dfTrain_lo[,1:9]), dfTrain_lo[,10], CV=TRUE)
+ct <- table(dfTrain_lo$quality, fit_l$class) 
+ct
+diag(prop.table(ct, 1)) #train выборка leave-one-out cross-validation
+sum(diag(prop.table(ct)))
+```
+
+На train выборке с cross-validation лучше классифицируются плохие вина. Общее процент правильно предсказанных инивидов-- 74% (хуже чем на test без cross-validation, но не существенно).
+
+Построим ROC-кривые для проверки на train данных и train с cross-validation.
+
+```{r}
+library(ROCR)
+pred1 <- prediction(pred$posterior[,2], dfTrain_lo$quality)
+plot(performance(pred1, "tpr", "fpr"),lwd=2) 
+lines(c(0,1),c(0,1))
+auc <- slot(performance(pred1, "auc"), "y.values")[[1]]
+text(0.6, 0.2,paste("AUC=", round(auc,4), sep=""), cex=1.4)
+title("ROC Curve")
+pred1 <- prediction(fit_l$posterior[,2], dfTrain_lo$quality)
+plot(performance(pred1, "tpr", "fpr"),lwd=2) 
+lines(c(0,1),c(0,1))
+auc <- slot(performance(pred1, "auc"), "y.values")[[1]]
+text(0.6, 0.2,paste("AUC=", round(auc,4), sep=""), cex=1.4)
+title("ROC Curve")
+```
+
+Чем больше AUC, тем лучше, для train данных AUC больше (как и должно быть).
+
+Рассмотрим ещё три модели классификации-- qda, svm и randomForest.
+
+```{r}
+fit <- qda(scale(dfTrain_lo[,1:9]), dfTrain_lo[,10]) #prior для задания весов, по умолчанию- соотношения в обучающей выборке
+pred_q <- predict(fit, scale(dfTrain_lo[,1:9])) #train выборка
+ct <- table(pred_q$class, dfTrain_lo[,10]) #Столбцы - настоящие классы, строки - предсказанные классы.
+ct
+diag(prop.table(ct, 1))
+sum(diag(prop.table(ct)))
+```
+
+QDA при проверке на train данных показывает совсем немного лучше результаты, чем LDA на train.
+
+```{r}
+pred_q <- predict(fit, scale(dfTest[,1:9])) #test выборка
+ct <- table(pred_q$class, dfTest[,10]) #Столбцы - настоящие классы, строки - предсказанные классы.
+ct
+diag(prop.table(ct, 1))
+sum(diag(prop.table(ct)))
+```
+
+QDA при проверке на test данных опять показывает совсем немного лучше результаты, чем LDA на test.
+
+```{r}
+fit_q <- qda(scale(dfTrain_lo[,1:9]), dfTrain_lo[,10], CV=TRUE) 
+ct <- table(dfTrain_lo$quality, fit_q$class) 
+ct
+diag(prop.table(ct, 1)) #train выборка leave-one-out cross-validation
+sum(diag(prop.table(ct)))
+```
+
+А вот при cross-validation LDA показывает результаты лучше.
+
+```{r}
+library(e1071)
+data.svm <- svm(as.numeric(quality) ~ ., data = dfTrain_lo, scale = TRUE, type= 'C-classification')
+data.svmp <- predict(data.svm, dfTest[,1:9])
+ct <- table(data.svmp, as.numeric(dfTest[,10]))
+ct
+diag(prop.table(ct, 1))
+sum(diag(prop.table(ct)))
+```
+
+Результаты лучше чем у LDA и QDA (test выборка).
+
+```{r}
+library(randomForest)
+set.seed(1) #лес случайный, так что для воспроизводимости установим set.seed (:
+rf <- randomForest(x = dfTrain_lo[-10], y = as.factor(dfTrain_lo$quality), scale = TRUE)
+rfp <- predict(rf, dfTest[,1:9])
+ct <- table(rfp, dfTest[,10])
+ct
+diag(prop.table(ct, 1))
+sum(diag(prop.table(ct)))
+```
+
+Наилучшие результаты среди рассматриваемых моделей (test выборка).
+
+Сравним ROC-кривые для моделей LDA и QDA (cross-validation проврека).
+
+```{r}
+pred_l <- prediction(fit_l$posterior[,2], dfTrain_lo$quality)
+plot(performance(pred_l, "tpr", "fpr"),lwd=2) 
+lines(c(0,1),c(0,1))
+auc <- slot(performance(pred_l, "auc"), "y.values")[[1]]
+text(0.6, 0.2,paste("AUC=", round(auc,4), sep=""), cex=1.4)
+title("ROC Curve")
+pred_q <- prediction(fit_q$posterior[,2], dfTrain_lo$quality)
+plot(performance(pred_q, "tpr", "fpr"),lwd=2) 
+lines(c(0,1),c(0,1))
+auc <- slot(performance(pred_q, "auc"), "y.values")[[1]]
+text(0.6, 0.2,paste("AUC=", round(auc,4), sep=""), cex=1.4)
+title("ROC Curve")
+```
+
+Модель LDA показывает результаты лучше (AUC больше).
+
+Построим модели LDA для меньшего числа признаков, для этого рассмотрим первые 6 главных компонент.
+
+```{r}
+pca_data <- cbind(res.pca$ind$coord, dfTrain_lo$quality)
+colnames(pca_data)[7] <- "quality"
+pca_test_data <- as.matrix(dfTest[,1:9])%*%as.matrix(res.pca$svd$V)
+fit <- lda(scale(pca_data[,1:6]), pca_data[,7]) #prior для задания весов, по умолчанию- соотношения в обучающей выборке
+fit$scaling
+```
+
+Наибольшее по модулю значение соответсвует 2 главной компоненте, что поддверждает преположение, выдвинутое при рассмотрении данных в плоскости первых двух ГК.
+
+```{r}
+pred_pca <- predict(fit, res.pca$ind$coord) #train выборка
+ct <- table(pred_pca$class, dfTrain_lo$quality) #Столбцы - настоящие классы, строки - предсказанные классы.
+ct
+diag(prop.table(ct, 1))
+sum(diag(prop.table(ct)))
+```
+
+На train выборке результаты лучше, чем у обычной LDA модели.
+
+```{r}
+pred <- predict(fit, scale(pca_test_data)) #test данные
+ct <- table(pred$class, dfTest$quality)
+ct
+diag(prop.table(ct, 1))
+sum(diag(prop.table(ct)))
+```
+
+На test выборке результаты хуже, чем у обычной LDA модели.
+
+```{r}
+dflo <- rbind(dfTrain_lo, dfTest)
+k_f = 5 #1590/5=318
+num = floor(nrow(dflo)/k_f)
+tr.index = sample(1:nrow(dflo), nrow(dflo))
+s = 0
+for (i in 1:k_f){
+  df_Train <- df[FALSE,]
+  for (j in 1:k_f){
+      a <- 1+num*(j-1)
+      b <- num*j
+    if(i!= j){
+      df_Train <- rbind(df_Train, dflo[tr.index[a:b], ])
+    }
+    else{
+      df_Test <- dflo[tr.index[a:b], ]
+    }
+  }
+  res.pca <- PCA(df_Train[-10], scale.unit = TRUE, ncp = 6, graph= FALSE)
+  pca_data <- cbind(res.pca$ind$coord, df_Train$quality)
+  colnames(pca_data)[7] <- "quality"
+  pca_test_data <- as.matrix(df_Test[,1:9])%*%as.matrix(res.pca$svd$V)
+  fit <- lda(scale(pca_data[,1:6]), pca_data[,7])
+  pred_pca <- predict(fit, scale(pca_test_data))
+  ct <- table(pred_pca$class, df_Test$quality) 
+  s = s + sum(diag(prop.table(ct)))
+}
+s/k_f
+```
+
+Результаты для k-fold (5 групп).

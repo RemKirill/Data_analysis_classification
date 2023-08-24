@@ -1,0 +1,80 @@
+---
+title: "Classification_Redkokosh"
+author: "Redkokosh Kirill"
+date: "5/23/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Прочитаем набор данных.
+
+```{r, include=FALSE}
+library(ISLR2)
+library(dplyr)
+library(ggplot2)
+library(GGally)
+library(ggpubr)
+library(caTools)
+set.seed(100)
+```
+
+```{r}
+data <- Auto
+head(data)
+```
+
+Вывели первые шесть строк.
+
+(a) Create a binary variable, mpg01, that contains a 1 if mpg contains a value above its median, and a 0 if mpg contains a value below its median.
+
+```{r}
+m <- median(data$mpg)
+data <- data %>% mutate(mpg01 = as.factor(as.integer(mpg < m)))
+head(data)
+```
+
+Добавили новую переменную и вывели полученный датафрейм.
+
+(b) Explore the data graphically in order to investigate the association between mpg01 and the other features. Which of the other features seem most likely to be useful in predicting mpg01? Scatterplots and boxplots may be useful tools to answer this question. Describe your findings.
+
+```{r}
+summary(data[2:8])
+gg <- ggpairs(data, title="correlogram", columns=c(2:8, 10), upper = list(continuous = "points"), diag = list(continuous = "barDiag"))
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggarrange(gg[1,8], gg[2,8], gg[3,8], gg[4,8], gg[5,8], gg[6,8], gg[7,8],  ncol = 3, nrow = 3)
+ggarrange(gg[8,1], gg[8,2], gg[8,3], gg[8,4], gg[8,5], gg[8,6], gg[8,7],  ncol = 3, nrow = 3)
+```
+
+Наиболее значимыми кажутся различия внутри переменных cylinders, displacement, horsepower, weight и origin (при группировке по mpg01), при этом cylinders и origin-- факторы, в дальнейшем будем использовать их в модели, но возможно, их влияение не будет значимым. 
+
+(c) Split the data into a training set and a test set.
+
+```{r}
+split <- sample.split(data$mpg01, SplitRatio = 0.67)
+dataTrain <- subset(data, split == "TRUE")
+dataTest <- subset(data, split == "FALSE")
+```
+
+Разделили данные в соотношении 67/33.
+
+(f) Perform logistic regression on the training data in order to predict mpg01 using the variables that seemed most associated with mpg01 in (b). What is the test error of the model obtained?
+
+```{r}
+glm.fits <- glm(mpg01 ~ cylinders + displacement + horsepower + weight + origin, data = dataTrain, family = binomial)
+summary(glm.fits)
+predict_reg <- predict(glm.fits, type = "response")
+predict_reg <- ifelse(predict_reg > 0.5, 1, 0)
+table(dataTrain$mpg01, predict_reg)
+mean(predict_reg == dataTrain$mpg01)
+predict_reg <- predict(glm.fits, newdata = dataTest, type = "response")
+predict_reg <- ifelse(predict_reg > 0.5, 1, 0)
+table(dataTest$mpg01, predict_reg)
+mean(predict_reg == dataTest$mpg01)
+```
+
+Значимыми являются коэффициенты перед horsepower и weight. Построенная модель правильно предсказывает 88.5% на тренировочной выборке и 89.2% на тестовой выборке.
